@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "owner": "umair77842s-team",
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0b141a",
+        "foregroundImage": "./assets/adaptive-icon.png"
+      },
+      "package": "com.dilo.chat"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "icon": "./assets/icon.png",
+    "ios": {
+      "bundleIdentifier": "com.dilo.chat",
+      "supportsTablet": true
+    },
+    "name": "Dilo Chat",
+    "orientation": "portrait",
+    "plugins": [
+      "expo-router",
+      "expo-splash-screen"
+    ],
+    "scheme": "dilochat",
+    "slug": "dilo-chat",
+    "splash": {
+      "backgroundColor": "#0b141a",
+      "image": "./assets/splash.png",
+      "resizeMode": "contain"
+    },
+    "userInterfaceStyle": "dark",
+    "version": "1.0.0",
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "router": {
+        "origin": false
+      },
+      "eas": {
+        "projectId": "da7bb777-e9fa-49eb-a952-c058e306afd5"
+      }
+    }
+  }
+}
