@@ -19,9 +19,18 @@
     "name": "Dilo Chat",
     "orientation": "portrait",
     "plugins": [
-      "expo-router",
-      "expo-splash-screen"
-    ],
+  "expo-router",
+  "expo-splash-screen",
+  [
+    "expo-build-properties",
+    {
+      "android": {
+        "kotlinVersion": "1.9.25"
+      }
+    }
+  ]
+],
+
     "scheme": "dilochat",
     "slug": "dilo-chat",
     "splash": {
