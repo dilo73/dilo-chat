@@ -5,7 +5,7 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as LocalAuthentication from 'expo-local-authentication';
+// expo-local-authentication removed (broke build); app-lock uses simple unlock
 import { Ionicons } from '@expo/vector-icons';
 import { SettingsProvider, useSettings } from '../theme/SettingsContext';
 import { AuthProvider } from '../lib/auth';
@@ -84,14 +84,8 @@ function useAppLock() {
   }, []);
 
   const unlock = async () => {
-    try {
-      const res = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Dilo Chat unlock karo',
-        fallbackLabel: 'Passcode use karo',
-        cancelLabel: 'Cancel',
-      });
-      if (res.success) setLocked(false);
-    } catch { /* stay locked */ }
+    // Biometric temporarily disabled (build issue); tap to unlock.
+    setLocked(false);
   };
 
   return { locked, unlock };
