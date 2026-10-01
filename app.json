@@ -19,24 +19,30 @@
     "name": "Dilo Chat",
     "orientation": "portrait",
     "plugins": [
-  "expo-router",
-  "expo-splash-screen",
-  [
-    "expo-build-properties",
-    {
-      "android": {
-        "kotlinVersion": "1.9.25"
-      }
-    }
-  ]
-],
-
+      "expo-router",
+      "expo-splash-screen",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "kotlinVersion": "1.9.25"
+          }
+        }
+      ]
+    ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "scheme": "dilochat",
     "slug": "dilo-chat",
     "splash": {
       "backgroundColor": "#0b141a",
       "image": "./assets/splash.png",
       "resizeMode": "contain"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/da7bb777-e9fa-49eb-a952-c058e306afd5",
+      "checkAutomatically": "ON_LOAD"
     },
     "userInterfaceStyle": "dark",
     "version": "1.0.0",

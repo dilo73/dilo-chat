@@ -41,7 +41,7 @@ interface SettingsValue {
 const SettingsContext = createContext<SettingsValue | null>(null);
 
 export function SettingsProvider({ children }: { children: React.ReactNode }) {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Poppins_400Regular, Poppins_600SemiBold, Poppins_700Bold,
     PlayfairDisplay_500Medium, PlayfairDisplay_700Bold,
     Lobster_400Regular,
@@ -54,6 +54,15 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
   const [singleTick, setSingleTickState] = useState(false);
   const [appOffline, setAppOfflineState] = useState(false);
   const [prefsLoaded, setPrefsLoaded] = useState(false);
+  // Safety: never trap the user on the splash screen — if fonts hang
+  // (slow/no network), fall back to system fonts after 6 seconds.
+  const [fontTimeout, setFontTimeout] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setFontTimeout(true), 6000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const fontsReady = fontsLoaded || !!fontError || fontTimeout;
 
   useEffect(() => {
     (async () => {
@@ -101,7 +110,7 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
     setSingleTick,
     appOffline,
     setAppOffline,
-    ready: fontsLoaded && prefsLoaded,
+    ready: fontsReady && prefsLoaded,
   };
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
