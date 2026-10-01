@@ -6,13 +6,23 @@ import * as SplashScreen from 'expo-splash-screen';
 import { SettingsProvider, useSettings } from '../theme/SettingsContext';
 import { AuthProvider } from '../lib/auth';
 
-SplashScreen.preventAutoHideAsync();
+// Prevent crash if splash module misbehaves on some devices.
+try {
+  SplashScreen.preventAutoHideAsync();
+} catch {
+  /* splash already hidden or unavailable */
+}
 
 function RootNavigator() {
   const { ready, theme } = useSettings();
 
   useEffect(() => {
-    if (ready) SplashScreen.hideAsync().catch(() => {});
+    if (ready) {
+      SplashScreen.hideAsync().catch(() => {});
+      // Force-hide after 2s in case hideAsync hangs on some devices.
+      const t = setTimeout(() => { SplashScreen.hideAsync().catch(() => {}); }, 2000);
+      return () => clearTimeout(t);
+    }
   }, [ready]);
 
   if (!ready) return null;

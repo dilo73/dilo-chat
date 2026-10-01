@@ -54,7 +54,7 @@
     },
     "updates": {
       "url": "https://u.expo.dev/da7bb777-e9fa-49eb-a952-c058e306afd5",
-      "checkAutomatically": "ON_LOAD"
+      "checkAutomatically": "ON_ERROR_RECOVERY"
     },
     "userInterfaceStyle": "dark",
     "version": "1.0.0",
