@@ -1,18 +1,17 @@
-// ─── Root layout: providers + navigation stack + app lock + crash catcher ───
+// ─── Root layout: providers + navigation stack ─────────────────────────────
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, AppState, ScrollView } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-// expo-local-authentication removed (broke build); app-lock uses simple unlock
-import { Ionicons } from '@expo/vector-icons';
+import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { SettingsProvider, useSettings } from '../theme/SettingsContext';
 import { AuthProvider } from '../lib/auth';
-import { APP_LOCK_KEY } from './(tabs)/settings';
 
 // ─── Crash catcher: show ANY error on screen instead of dying silently ────
+// Module-level slot so the global handler can push fatal errors into React state.
 let pushFatalError: ((e: Error) => void) | null = null;
+
+// Catch fatal JS errors that happen OUTSIDE React render (async, etc.)
 try {
   const ErrorUtilsAny = (global as any).ErrorUtils;
   if (ErrorUtilsAny?.setGlobalHandler) {
@@ -21,7 +20,7 @@ try {
       try {
         if (isFatal && pushFatalError) {
           pushFatalError(error instanceof Error ? error : new Error(String(error)));
-          return;
+          return; // swallowed: shown on screen instead of killing the app
         }
       } catch { /* ignore */ }
       if (prev) prev(error, isFatal);
@@ -42,6 +41,9 @@ class AppErrorBoundary extends React.Component<
   }
   componentWillUnmount() {
     pushFatalError = null;
+  }
+  componentDidCatch(error: Error) {
+    console.log('CAUGHT BY BOUNDARY:', error?.message);
   }
   render() {
     if (this.state.error) {
@@ -65,63 +67,13 @@ try {
   /* splash already hidden or unavailable */
 }
 
-function useAppLock() {
-  const [locked, setLocked] = useState(false);
-
-  const checkAndLock = async () => {
-    try {
-      const v = await AsyncStorage.getItem(APP_LOCK_KEY);
-      if (v === '1') setLocked(true);
-    } catch { /* ignore */ }
-  };
-
-  useEffect(() => {
-    checkAndLock();
-    const sub = AppState.addEventListener('change', (s) => {
-      if (s === 'active') checkAndLock();
-    });
-    return () => sub.remove();
-  }, []);
-
-  const unlock = async () => {
-    // Biometric temporarily disabled (build issue); tap to unlock.
-    setLocked(false);
-  };
-
-  return { locked, unlock };
-}
-
-function LockOverlay({ onUnlock, colors }: {
-  onUnlock: () => void; colors: any;
-}) {
-  return (
-    <View style={[styles.lockWrap, { backgroundColor: colors.background }]}>
-      <View style={[styles.lockIcon, { backgroundColor: colors.surface }]}>
-        <Ionicons name="lock-closed" size={44} color={colors.accent} />
-      </View>
-      <Text style={[styles.lockTitle, { color: colors.text }]}>Dilo Chat locked 🔒</Text>
-      <Text style={[styles.lockSub, { color: colors.textDim }]}>
-        App kholne ke liye unlock karo
-      </Text>
-      <TouchableOpacity
-        onPress={onUnlock}
-        style={[styles.unlockBtn, { backgroundColor: colors.accent }]}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="finger-print" size={20} color={colors.textOnAccent} />
-        <Text style={[styles.unlockText, { color: colors.textOnAccent }]}>Unlock</Text>
-      </TouchableOpacity>
-    </View>
-  );
-}
-
 function RootNavigator() {
   const { ready, theme } = useSettings();
-  const { locked, unlock } = useAppLock();
 
   useEffect(() => {
     if (ready) {
       SplashScreen.hideAsync().catch(() => {});
+      // Force-hide after 2s in case hideAsync hangs on some devices.
       const t = setTimeout(() => { SplashScreen.hideAsync().catch(() => {}); }, 2000);
       return () => clearTimeout(t);
     }
@@ -130,7 +82,7 @@ function RootNavigator() {
   if (!ready) return null;
 
   return (
-    <View style={{ flex: 1 }}>
+    <>
       <StatusBar style="light" />
       <Stack
         screenOptions={{
@@ -142,15 +94,8 @@ function RootNavigator() {
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="chat/[id]" />
-        <Stack.Screen name="starred" />
-        <Stack.Screen name="broadcast" />
       </Stack>
-      {locked && (
-        <View style={StyleSheet.absoluteFill}>
-          <LockOverlay onUnlock={unlock} colors={theme.colors} />
-        </View>
-      )}
-    </View>
+    </>
   );
 }
 
@@ -171,18 +116,4 @@ const styles = StyleSheet.create({
   errTitle: { fontSize: 18, fontWeight: '700', color: '#c00', marginBottom: 12 },
   errMsg: { fontSize: 15, color: '#111', marginBottom: 12 },
   errStack: { fontSize: 11, color: '#666' },
-  lockWrap: {
-    flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 40,
-  },
-  lockIcon: {
-    width: 100, height: 100, borderRadius: 50,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 20,
-  },
-  lockTitle: { fontSize: 21, fontWeight: '700', marginBottom: 8 },
-  lockSub: { fontSize: 14, textAlign: 'center', marginBottom: 28, lineHeight: 21 },
-  unlockBtn: {
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 30, paddingVertical: 14, borderRadius: 26,
-  },
-  unlockText: { fontSize: 16, fontWeight: '700', marginLeft: 8 },
 });
