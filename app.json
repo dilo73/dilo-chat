@@ -6,7 +6,12 @@
         "backgroundColor": "#0b141a",
         "foregroundImage": "./assets/adaptive-icon.png"
       },
-      "package": "com.dilo.chat"
+      "package": "com.dilo.chat",
+      "permissions": [
+        "android.permission.RECEIVE_BOOT_COMPLETED",
+        "android.permission.VIBRATE",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "assetBundlePatterns": [
       "**/*"
@@ -27,6 +32,13 @@
           "android": {
             "kotlinVersion": "1.9.25"
           }
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#0b141a"
         }
       ]
     ],

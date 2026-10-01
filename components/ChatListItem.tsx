@@ -17,13 +17,20 @@ interface Props {
 
 export function ChatListItem({ chat, currentUid, theme, font, onPress }: Props) {
   const c = theme.colors;
+  const isGroup = !!chat.isGroup;
   const otherUid = chat.participants.find((p) => p !== currentUid) ?? currentUid;
-  const name = chat.names[otherUid] ?? 'Unknown';
+  const name = isGroup ? (chat.groupName ?? 'Group') : (chat.names[otherUid] ?? 'Unknown');
   const unread = chat.unread[currentUid] ?? 0;
 
   return (
     <TouchableOpacity onPress={onPress} style={[styles.row, { borderBottomColor: c.divider }]} activeOpacity={0.7}>
-      <Avatar name={name} colors={c} />
+      {isGroup ? (
+        <View style={[styles.groupIcon, { backgroundColor: c.accent }]}>
+          <Text style={styles.groupEmoji}>👥</Text>
+        </View>
+      ) : (
+        <Avatar name={name} colors={c} />
+      )}
       <View style={styles.middle}>
         <Text style={[styles.name, { color: c.text, fontFamily: font.family }]} numberOfLines={1}>
           {name}
@@ -55,4 +62,6 @@ const styles = StyleSheet.create({
   time: { fontSize: 12, marginBottom: 5 },
   badge: { minWidth: 21, height: 21, borderRadius: 10.5, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 6 },
   badgeText: { fontSize: 12, fontWeight: '700' },
+  groupIcon: { width: 52, height: 52, borderRadius: 26, alignItems: 'center', justifyContent: 'center' },
+  groupEmoji: { fontSize: 24 },
 });

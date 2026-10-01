@@ -13,6 +13,7 @@ import {
   persistentLocalCache,
   persistentMultipleTabManager,
 } from 'firebase/firestore';
+import { getStorage, FirebaseStorage } from 'firebase/storage';
 
 export const firebaseConfig = {
   apiKey: 'AIzaSyBzzRYNLjKQKhnI5OXe4UC6lKlMY0nWWsM',
@@ -28,6 +29,7 @@ export const isConfigured: boolean = !firebaseConfig.apiKey.startsWith('PASTE');
 let app: FirebaseApp | null = null;
 let auth: Auth | null = null;
 let firestoreDb: Firestore | null = null;
+let storage: FirebaseStorage | null = null;
 
 if (isConfigured) {
   app = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
@@ -38,6 +40,7 @@ if (isConfigured) {
       tabManager: persistentMultipleTabManager(),
     }),
   });
+  storage = getStorage(app);
 }
 
-export { auth, firestoreDb };
+export { auth, firestoreDb, storage };

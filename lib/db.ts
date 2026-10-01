@@ -16,6 +16,7 @@ export interface UserProfile {
   name: string;
   online: boolean;
   lastSeen: number;
+  pushToken?: string;
 }
 
 export interface Chat {
@@ -27,9 +28,14 @@ export interface Chat {
   lastMessageAt: number;
   updatedAt: number;
   unread: Record<string, number>;
+  /** Group chat fields */
+  isGroup?: boolean;
+  groupName?: string;
+  adminIds?: string[];
 }
 
 export type MessageStatus = 'sent' | 'delivered' | 'read';
+export type MessageType = 'text' | 'voice';
 
 export interface ChatMessage {
   id: string;
@@ -38,6 +44,19 @@ export interface ChatMessage {
   text: string;
   createdAt: number;
   status: MessageStatus;
+  /** Voice message fields */
+  type?: MessageType;
+  audioUrl?: string;
+  duration?: number; // seconds
+}
+
+export interface StatusItem {
+  id: string;
+  userId: string;
+  userName: string;
+  text: string;
+  createdAt: number;
+  expiresAt: number;
 }
 
 export type Unsubscribe = () => void;
@@ -53,8 +72,14 @@ export interface ChatDb {
   subscribeMessages(chatId: string, cb: (msgs: ChatMessage[]) => void): Unsubscribe;
   getOrCreateChat(uidA: string, uidB: string): Promise<string>;
   sendMessage(chatId: string, senderId: string, text: string): Promise<void>;
+  sendVoiceMessage(chatId: string, senderId: string, audioUrl: string, duration: number): Promise<void>;
   markChatRead(chatId: string, uid: string): Promise<void>;
   markDelivered(chatId: string, messageId: string): Promise<void>;
+  /** Group chat */
+  createGroup(name: string, creatorUid: string, memberUids: string[]): Promise<string>;
+  /** Status / stories (24h) */
+  postStatus(userId: string, userName: string, text: string): Promise<void>;
+  subscribeStatuses(cb: (items: StatusItem[]) => void): Unsubscribe;
 }
 
 // ─── Real backend: Cloud Firestore ──────────────────────────────────────────
@@ -70,6 +95,7 @@ class FirestoreDb implements ChatDb {
       name: data.name ?? 'Unknown',
       online: !!data.online,
       lastSeen: data.lastSeen ?? 0,
+      pushToken: data.pushToken ?? undefined,
     };
   }
 
@@ -83,6 +109,9 @@ class FirestoreDb implements ChatDb {
       lastMessageAt: data.lastMessageAt ?? 0,
       updatedAt: data.updatedAt ?? 0,
       unread: data.unread ?? {},
+      isGroup: !!data.isGroup,
+      groupName: data.groupName ?? undefined,
+      adminIds: data.adminIds ?? undefined,
     };
   }
 
@@ -93,7 +122,42 @@ class FirestoreDb implements ChatDb {
       text: data.text ?? '',
       createdAt: data.createdAt ?? 0,
       status: (data.status ?? 'sent') as MessageStatus,
+      type: (data.type ?? 'text') as MessageType,
+      audioUrl: data.audioUrl ?? undefined,
+      duration: data.duration ?? undefined,
     };
+  }
+
+  private toStatus(id: string, data: any): StatusItem {
+    return {
+      id,
+      userId: data.userId ?? '',
+      userName: data.userName ?? 'Unknown',
+      text: data.text ?? '',
+      createdAt: data.createdAt ?? 0,
+      expiresAt: data.expiresAt ?? 0,
+    };
+  }
+
+  /** Notify all other participants of a new message via push. */
+  private async notifyParticipants(chatId: string, senderId: string, preview: string): Promise<void> {
+    try {
+      const chatSnap = await getDoc(doc(this.db, 'chats', chatId));
+      const data = chatSnap.data();
+      if (!data) return;
+      const others: string[] = (data.participants ?? []).filter((p: string) => p !== senderId);
+      if (others.length === 0) return;
+      const senderName: string = data.isGroup
+        ? `${data.names?.[senderId] ?? 'Someone'} (${data.groupName ?? 'Group'})`
+        : (data.names?.[senderId] ?? 'Dilo Chat');
+      const tokens: string[] = [];
+      for (const uid of others) {
+        const u = await this.getUser(uid);
+        if (u?.pushToken) tokens.push(u.pushToken);
+      }
+      const { sendPush } = await import('./notifications');
+      await sendPush(tokens, senderName, preview, { chatId });
+    } catch { /* push is best-effort */ }
   }
 
   async ensureUser(uid: string, phone: string, name: string): Promise<void> {
@@ -169,18 +233,89 @@ class FirestoreDb implements ChatDb {
 
   async sendMessage(chatId: string, senderId: string, text: string): Promise<void> {
     const chatSnap = await getDoc(doc(this.db, 'chats', chatId));
-    const other = (chatSnap.data()?.participants ?? []).find((p: string) => p !== senderId);
+    const participants: string[] = chatSnap.data()?.participants ?? [];
     const batch = writeBatch(this.db);
     const msgRef = doc(collection(this.db, 'chats', chatId, 'messages'));
-    batch.set(msgRef, { senderId, text, createdAt: Date.now(), status: 'sent' });
+    batch.set(msgRef, { senderId, text, type: 'text', createdAt: Date.now(), status: 'sent' });
     const updates: Record<string, any> = {
       lastMessage: text,
       lastMessageAt: Date.now(),
       updatedAt: Date.now(),
     };
-    if (other) updates[`unread.${other}`] = increment(1);
+    participants.forEach((p) => {
+      if (p !== senderId) updates[`unread.${p}`] = increment(1);
+    });
     batch.update(doc(this.db, 'chats', chatId), updates);
     await batch.commit();
+    this.notifyParticipants(chatId, senderId, text);
+  }
+
+  async sendVoiceMessage(chatId: string, senderId: string, audioUrl: string, duration: number): Promise<void> {
+    const chatSnap = await getDoc(doc(this.db, 'chats', chatId));
+    const participants: string[] = chatSnap.data()?.participants ?? [];
+    const preview = `🎤 Voice message (${Math.round(duration)}s)`;
+    const batch = writeBatch(this.db);
+    const msgRef = doc(collection(this.db, 'chats', chatId, 'messages'));
+    batch.set(msgRef, { senderId, text: preview, type: 'voice', audioUrl, duration, createdAt: Date.now(), status: 'sent' });
+    const updates: Record<string, any> = {
+      lastMessage: preview,
+      lastMessageAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    participants.forEach((p) => {
+      if (p !== senderId) updates[`unread.${p}`] = increment(1);
+    });
+    batch.update(doc(this.db, 'chats', chatId), updates);
+    await batch.commit();
+    this.notifyParticipants(chatId, senderId, preview);
+  }
+
+  async createGroup(name: string, creatorUid: string, memberUids: string[]): Promise<string> {
+    const participants = [...new Set([creatorUid, ...memberUids])];
+    const names: Record<string, string> = {};
+    const phones: Record<string, string> = {};
+    await Promise.all(participants.map(async (uid) => {
+      const u = await this.getUser(uid);
+      names[uid] = u?.name ?? 'Unknown';
+      phones[uid] = u?.phone ?? '';
+    }));
+    const ref = await addDoc(collection(this.db, 'chats'), {
+      participants,
+      names,
+      phones,
+      isGroup: true,
+      groupName: name.trim() || 'New Group',
+      adminIds: [creatorUid],
+      lastMessage: 'Group created 🎉',
+      lastMessageAt: Date.now(),
+      updatedAt: Date.now(),
+      unread: {},
+    });
+    return ref.id;
+  }
+
+  async postStatus(userId: string, userName: string, text: string): Promise<void> {
+    const now = Date.now();
+    await addDoc(collection(this.db, 'statuses'), {
+      userId,
+      userName,
+      text: text.trim().slice(0, 300),
+      createdAt: now,
+      expiresAt: now + 24 * 3600 * 1000,
+    });
+  }
+
+  subscribeStatuses(cb: (items: StatusItem[]) => void): Unsubscribe {
+    const q = query(collection(this.db, 'statuses'), orderBy('createdAt', 'desc'), limit(200));
+    return onSnapshot(q,
+      (s) => {
+        const now = Date.now();
+        const items = s.docs
+          .map((d) => this.toStatus(d.id, d.data()))
+          .filter((it) => it.expiresAt > now);
+        cb(items);
+      },
+      () => cb([]));
   }
 
   async markChatRead(chatId: string, uid: string): Promise<void> {
@@ -351,27 +486,27 @@ class MockDb implements ChatDb {
   async sendMessage(chatId: string, senderId: string, text: string): Promise<void> {
     const chat = this.chats.get(chatId);
     if (!chat) return;
-    const other = chat.participants.find((p) => p !== senderId);
     const msg: ChatMessage = {
       id: `m_${Date.now()}_${this.seq++}`,
-      chatId, senderId, text, createdAt: Date.now(), status: 'sent',
+      chatId, senderId, text, type: 'text', createdAt: Date.now(), status: 'sent',
     };
     this.messages.get(chatId)!.push(msg);
+    const unread = { ...chat.unread };
+    chat.participants.forEach((p) => { if (p !== senderId) unread[p] = (unread[p] ?? 0) + 1; });
     this.chats.set(chatId, {
       ...chat,
-      lastMessage: text, lastMessageAt: msg.createdAt, updatedAt: msg.createdAt,
-      unread: other ? { ...chat.unread, [other]: (chat.unread[other] ?? 0) + 1 } : chat.unread,
+      lastMessage: text, lastMessageAt: msg.createdAt, updatedAt: msg.createdAt, unread,
     });
     this.emitMessages(chatId); this.emitChat(chatId);
-    this.emitChats(senderId); if (other) this.emitChats(other);
+    chat.participants.forEach((p) => this.emitChats(p));
     // Demo auto-reply so single-device testing feels alive.
-    if (other && (other === 'demo_923001112233' || other === 'demo_923004445566')) {
+    const other = chat.participants.find((p) => p !== senderId);
+    if (!chat.isGroup && other && (other === 'demo_923001112233' || other === 'demo_923004445566')) {
       setTimeout(() => this.demoReply(chatId, other), 2500);
     }
   }
 
-  private demoReply(chatId: string, fromUid: string) {
-    const chat = this.chats.get(chatId);
+  private demoReply(chatId: string, fromUid: string) {    const chat = this.chats.get(chatId);
     if (!chat) return;
     const replies = [
       'Nice! Dilo Chat is working 🔥',
@@ -415,6 +550,68 @@ class MockDb implements ChatDb {
       msg.status = 'delivered';
       this.emitMessages(chatId);
     }
+  }
+
+  async sendVoiceMessage(chatId: string, senderId: string, audioUrl: string, duration: number): Promise<void> {
+    const chat = this.chats.get(chatId);
+    if (!chat) return;
+    const preview = `🎤 Voice message (${Math.round(duration)}s)`;
+    const msg: ChatMessage = {
+      id: `m_${Date.now()}_${this.seq++}`,
+      chatId, senderId, text: preview, type: 'voice', audioUrl, duration,
+      createdAt: Date.now(), status: 'sent',
+    };
+    this.messages.get(chatId)!.push(msg);
+    const unread = { ...chat.unread };
+    chat.participants.forEach((p) => { if (p !== senderId) unread[p] = (unread[p] ?? 0) + 1; });
+    this.chats.set(chatId, { ...chat, lastMessage: preview, lastMessageAt: msg.createdAt, updatedAt: msg.createdAt, unread });
+    this.emitMessages(chatId); this.emitChat(chatId);
+    chat.participants.forEach((p) => this.emitChats(p));
+  }
+
+  private statusItems: StatusItem[] = [];
+  private statusListeners = new Set<Cb<StatusItem[]>>();
+
+  async createGroup(name: string, creatorUid: string, memberUids: string[]): Promise<string> {
+    const participants = [...new Set([creatorUid, ...memberUids])];
+    const names: Record<string, string> = {};
+    const phones: Record<string, string> = {};
+    participants.forEach((uid) => {
+      const u = this.users.get(uid);
+      names[uid] = u?.name ?? 'Unknown';
+      phones[uid] = u?.phone ?? '';
+    });
+    const id = `group_${Date.now()}_${this.seq++}`;
+    this.chats.set(id, {
+      id, participants, names, phones,
+      isGroup: true, groupName: name.trim() || 'New Group', adminIds: [creatorUid],
+      lastMessage: 'Group created 🎉', lastMessageAt: Date.now(), updatedAt: Date.now(), unread: {},
+    });
+    this.messages.set(id, []);
+    this.emitChat(id); this.emitMessages(id);
+    participants.forEach((p) => this.emitChats(p));
+    return id;
+  }
+
+  async postStatus(userId: string, userName: string, text: string): Promise<void> {
+    const now = Date.now();
+    this.statusItems.unshift({
+      id: `s_${now}_${this.seq++}`, userId, userName,
+      text: text.trim().slice(0, 300), createdAt: now, expiresAt: now + 24 * 3600 * 1000,
+    });
+    this.emitStatuses();
+  }
+
+  private emitStatuses() {
+    const now = Date.now();
+    const live = this.statusItems.filter((s) => s.expiresAt > now);
+    this.statusListeners.forEach((cb) => cb(live));
+  }
+
+  subscribeStatuses(cb: Cb<StatusItem[]>): Unsubscribe {
+    this.statusListeners.add(cb);
+    this.emitStatuses();
+    return () => { this.statusListeners.delete(cb); };
   }
 }
 

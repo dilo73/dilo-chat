@@ -10,6 +10,7 @@ import { useAuth } from '../../lib/auth';
 import { chatDb } from '../../lib/db';
 import { getQueued, removeQueued } from '../../lib/queue';
 import { useEffectiveOffline } from '../../lib/net';
+import { registerPushToken, savePushToken } from '../../lib/notifications';
 
 export default function TabsLayout() {
   const { theme } = useSettings();
@@ -26,6 +27,17 @@ export default function TabsLayout() {
       clearInterval(t);
       chatDb.setOnline(user.uid, false);
     };
+  }, [user?.uid]);
+
+  // Push token registration (best-effort, once per login)
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      const token = await registerPushToken();
+      if (!cancelled && token) await savePushToken(user.uid, token);
+    })();
+    return () => { cancelled = true; };
   }, [user?.uid]);
 
   // Flush queued messages when back online
@@ -60,6 +72,13 @@ export default function TabsLayout() {
           options={{
             title: 'Chats',
             tabBarIcon: ({ color, size }) => <Ionicons name="chatbubbles-outline" size={size} color={color} />,
+          }}
+        />
+        <Tabs.Screen
+          name="status"
+          options={{
+            title: 'Status',
+            tabBarIcon: ({ color, size }) => <Ionicons name="aperture-outline" size={size} color={color} />,
           }}
         />
         <Tabs.Screen
