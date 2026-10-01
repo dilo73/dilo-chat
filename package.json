@@ -16,7 +16,6 @@
     "expo-dev-client": "~5.0.20",
     "expo-font": "~13.0.1",
     "expo-linking": "~7.0.3",
-    "expo-notifications": "~0.29.0",
     "expo-router": "~4.0.11",
     "expo-splash-screen": "~0.29.13",
     "expo-status-bar": "~2.0.0",

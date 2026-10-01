@@ -33,13 +33,6 @@
             "kotlinVersion": "1.9.25"
           }
         }
-      ],
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/icon.png",
-          "color": "#0b141a"
-        }
       ]
     ],
     "scheme": "dilochat",
