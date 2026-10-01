@@ -11,7 +11,7 @@ import {
   initializeFirestore,
   Firestore,
   persistentLocalCache,
-  persistentMultipleTabManager,
+  persistentSingleTabManager,
 } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 
@@ -37,7 +37,7 @@ if (isConfigured) {
   // Offline persistence: old chats stay readable with no internet.
   firestoreDb = initializeFirestore(app, {
     localCache: persistentLocalCache({
-      tabManager: persistentMultipleTabManager(),
+      tabManager: persistentSingleTabManager(),
     }),
   });
   storage = getStorage(app);
