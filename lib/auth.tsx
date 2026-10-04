@@ -1,23 +1,19 @@
-// ─── Phone-number auth ──────────────────────────────────────────────────────
-// • Demo mode (no Firebase keys yet, or native app): any 6-digit code works.
-// • Real mode (keys pasted + running on web): Firebase Phone Auth SMS OTP.
-//   Real SMS on a physical phone needs a dev build (see SETUP.md) —
-//   until then the app clearly labels itself "Demo mode".
+// ─── Phone-number auth (REAL Firebase SMS OTP) ─────────────────────────────
+// Sign-in uses the native Firebase phone authentication:
+//   phone number → real SMS code → enter code → signed in with Firebase UID.
+// There is NO demo mode and NO bypass. Signing in without the SMS code is
+// impossible.
 
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  signInWithPhoneNumber, RecaptchaVerifier, ConfirmationResult, signOut,
-} from 'firebase/auth';
-import { isConfigured, auth } from './firebase';
+import auth, { FirebaseAuthTypes } from '@react-native-firebase/auth';
 import { chatDb } from './db';
 
 export interface AuthUser {
   uid: string;
   phone: string;
   name: string;
-  demo: boolean;
 }
 
 interface PendingVerification {
@@ -28,104 +24,119 @@ interface PendingVerification {
 interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
-  /** True when real Firebase SMS OTP can be used (keys + web). */
-  realOtpPossible: boolean;
-  /** True when the current session is a demo login. */
-  demoMode: boolean;
   startVerification: (phone: string, name: string) => Promise<void>;
   confirmCode: (code: string) => Promise<void>;
-  useDemoInstead: () => Promise<void>;
   updateName: (name: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
+// Error codes thrown by startVerification / confirmCode.
+export const SEND_INVALID_NUMBER = 'INVALID_NUMBER';
+export const SEND_TOO_MANY = 'TOO_MANY';
+export const SEND_FAILED = 'SEND_FAILED';
+export const VERIFY_WRONG_CODE = 'WRONG_CODE';
+export const VERIFY_EXPIRED = 'EXPIRED';
+export const VERIFY_NO_PENDING = 'NO_PENDING';
+export const VERIFY_FAILED = 'VERIFY_FAILED';
+const BAD_CODE_FORMAT = 'BAD_CODE';
+
 const SESSION_KEY = 'dilochat_session_v1';
 const PENDING_KEY = 'dilochat_pending_v1';
-
-export const REAL_OTP_FAILED = 'REAL_OTP_FAILED';
-
-// Real SMS OTP only works with the Firebase JS SDK on web (it needs reCAPTCHA).
-// On native builds it requires @react-native-firebase (see SETUP.md).
-export const realOtpPossible: boolean = isConfigured && Platform.OS === 'web';
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
-  const [demoMode, setDemoMode] = useState(!realOtpPossible);
-  const confirmRef = useRef<ConfirmationResult | null>(null);
+  const confirmRef = useRef<FirebaseAuthTypes.ConfirmationResult | null>(null);
 
+  // Restore session: Firebase keeps the user signed in on this device.
   useEffect(() => {
-    (async () => {
+    const unsub = auth().onAuthStateChanged(async (fbUser) => {
       try {
-        const raw = await AsyncStorage.getItem(SESSION_KEY);
-        if (raw) {
-          const saved = JSON.parse(raw) as AuthUser;
-          setUser(saved);
-          setDemoMode(saved.demo);
-          chatDb.setOnline(saved.uid, true).catch(() => {});
+        if (fbUser) {
+          const raw = await AsyncStorage.getItem(SESSION_KEY);
+          let profile: AuthUser | null = null;
+          if (raw) {
+            const saved = JSON.parse(raw) as AuthUser;
+            if (saved.uid === fbUser.uid) profile = saved;
+          }
+          if (!profile) {
+            profile = {
+              uid: fbUser.uid,
+              phone: fbUser.phoneNumber ?? '',
+              name: '',
+            };
+            await chatDb.ensureUser(profile.uid, profile.phone, profile.name);
+            await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(profile));
+          }
+          setUser(profile);
+          chatDb.setOnline(profile.uid, true).catch(() => {});
+        } else {
+          await AsyncStorage.removeItem(SESSION_KEY);
+          setUser(null);
         }
-      } catch { /* ignore */ }
+      } catch {
+        // Corrupted storage: force a fresh login.
+        await AsyncStorage.removeItem(SESSION_KEY);
+        await AsyncStorage.removeItem(PENDING_KEY);
+        setUser(null);
+      }
       setLoading(false);
-    })();
+    });
+    return () => unsub();
   }, []);
 
   const finishLogin = async (u: AuthUser) => {
     await chatDb.ensureUser(u.uid, u.phone, u.name);
     await AsyncStorage.setItem(SESSION_KEY, JSON.stringify(u));
-    setDemoMode(u.demo);
     setUser(u);
   };
 
+  /** Send a real SMS code to the phone number. */
   const startVerification = async (phone: string, name: string) => {
-    const pending: PendingVerification = { phone, name };
+    if (Platform.OS === 'web') throw new Error(SEND_FAILED);
+    const clean = phone.replace(/[^\d+]/g, '');
+    const pending: PendingVerification = { phone: clean, name };
     await AsyncStorage.setItem(PENDING_KEY, JSON.stringify(pending));
     confirmRef.current = null;
-    setDemoMode(!realOtpPossible);
-    if (!realOtpPossible) return; // demo path: OTP screen accepts any 6-digit code
     try {
-      const verifier = new RecaptchaVerifier(auth!, 'dilochat-recaptcha', { size: 'invisible' });
-      confirmRef.current = await signInWithPhoneNumber(auth!, phone, verifier);
-    } catch (e) {
-      console.warn('Phone auth failed:', e);
-      throw new Error(REAL_OTP_FAILED);
+      confirmRef.current = await auth().signInWithPhoneNumber(clean);
+    } catch (e: any) {
+      const code: string = e?.code ?? '';
+      if (code === 'auth/invalid-phone-number') throw new Error(SEND_INVALID_NUMBER);
+      if (code === 'auth/too-many-requests') throw new Error(SEND_TOO_MANY);
+      throw new Error(SEND_FAILED);
     }
   };
 
+  /** Verify the 6-digit SMS code and sign the user in. */
   const confirmCode = async (code: string) => {
     const raw = await AsyncStorage.getItem(PENDING_KEY);
-    if (!raw) throw new Error('NO_PENDING');
+    if (!raw) throw new Error(VERIFY_NO_PENDING);
     const pending = JSON.parse(raw) as PendingVerification;
-    if (!/^\d{6}$/.test(code)) throw new Error('BAD_CODE');
-
-    if (realOtpPossible && confirmRef.current && !demoMode) {
-      const cred = await confirmRef.current.confirm(code);
+    if (!/^\d{6}$/.test(code)) throw new Error(BAD_CODE_FORMAT);
+    const confirmation = confirmRef.current;
+    if (!confirmation) throw new Error(VERIFY_NO_PENDING);
+    try {
+      const cred = await confirmation.confirm(code);
+      if (!cred) throw new Error(VERIFY_FAILED);
+      const fbUser = cred.user;
+      await AsyncStorage.removeItem(PENDING_KEY);
       await finishLogin({
-        uid: cred.user.uid, phone: pending.phone, name: pending.name, demo: false,
+        uid: fbUser.uid,
+        phone: pending.phone,
+        name: pending.name,
       });
-    } else {
-      // DEMO MODE: any 6-digit code is accepted.
-      await finishLogin({
-        uid: `demo_${pending.phone.replace(/\D/g, '')}`,
-        phone: pending.phone, name: pending.name, demo: true,
-      });
+    } catch (e: any) {
+      if (e?.message === VERIFY_NO_PENDING || e?.message === BAD_CODE_FORMAT) throw e;
+      const errCode: string = e?.code ?? '';
+      if (errCode === 'auth/invalid-verification-code') throw new Error(VERIFY_WRONG_CODE);
+      if (errCode === 'auth/session-expired' || errCode === 'auth/code-expired') {
+        throw new Error(VERIFY_EXPIRED);
+      }
+      throw new Error(VERIFY_FAILED);
     }
-    await AsyncStorage.removeItem(PENDING_KEY);
-  };
-
-  /** Fall back to a demo login when real OTP can't start. */
-  const useDemoInstead = async () => {
-    setDemoMode(true);
-    confirmRef.current = null;
-    const raw = await AsyncStorage.getItem(PENDING_KEY);
-    if (!raw) throw new Error('NO_PENDING');
-    const pending = JSON.parse(raw) as PendingVerification;
-    await finishLogin({
-      uid: `demo_${pending.phone.replace(/\D/g, '')}`,
-      phone: pending.phone, name: pending.name, demo: true,
-    });
-    await AsyncStorage.removeItem(PENDING_KEY);
   };
 
   const updateName = async (name: string) => {
@@ -138,8 +149,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     if (user) chatDb.setOnline(user.uid, false).catch(() => {});
-    if (auth && user && !user.demo) {
-      try { await signOut(auth); } catch { /* ignore */ }
+    try {
+      await auth().signOut();
+    } catch {
+      /* ignore */
     }
     await AsyncStorage.removeItem(SESSION_KEY);
     setUser(null);
@@ -147,10 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{
-        user, loading, realOtpPossible, demoMode,
-        startVerification, confirmCode, useDemoInstead, updateName, logout,
-      }}
+      value={{ user, loading, startVerification, confirmCode, updateName, logout }}
     >
       {children}
     </AuthContext.Provider>
