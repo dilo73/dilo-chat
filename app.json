@@ -33,7 +33,8 @@
             "kotlinVersion": "1.9.25"
           }
         }
-      ]
+      ],
+      "@react-native-firebase/app"
     ],
     "scheme": "dilochat",
     "slug": "dilo-chat",
